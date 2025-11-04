@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: dim_card
+    description: "Dimension: card"
+    tests:
+      - not_null:
+          column_name: card_hash
+      - unique:
+          column_name: card_hash
+
+  - name: dim_merchant
+    description: "Dimension: merchant"
+    tests:
+      - not_null:
+          column_name: merchant_id
+      - unique:
+          column_name: merchant_id
+
+  - name: dim_date
+    description: "Dimension: date"
+    tests:
+      - not_null:
+          column_name: date_id
+      - unique:
+          column_name: date_id
+
+  - name: fact_transactions
+    description: "Fact table: transactions"
+    tests:
+      - not_null:
+          column_name: transaction_id
+      - unique:
+          column_name: transaction_id
+      - relationships:
+          column_name: card_hash
+          to: ref('dim_card')
+          field: card_hash
+      - relationships:
+          column_name: merchant_id
+          to: ref('dim_merchant')
+          field: merchant_id
+      - tests:
+          - dbt_utils.expression_is_true:
+              expression: "amount >= 0"
+
+  - name: fact_settlement_daily
+    description: "Daily settlement aggregates"
+    tests:
+      - not_null:
+          column_name: merchant_id
+
+  - name: fact_fraud_signals
+    description: "Fraud signals"
+    tests:
+      - not_null:
+          column_name: transaction_id

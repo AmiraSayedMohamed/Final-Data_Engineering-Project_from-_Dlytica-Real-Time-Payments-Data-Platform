@@ -1,0 +1,13 @@
+# Example dbt profiles.yml (copy this to ~/.dbt/profiles.yml and edit credentials)
+default:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      threads: 1
+      host: postgres
+      port: 5432
+      user: payments
+      pass: payments
+      dbname: payments_dw
+      schema: public

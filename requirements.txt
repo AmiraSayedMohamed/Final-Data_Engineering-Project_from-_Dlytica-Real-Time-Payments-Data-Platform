@@ -1,0 +1,10 @@
+pandas
+sqlalchemy
+psycopg2-binary
+pytest
+dbt-core
+dbt-postgres
+pyspark
+kafka-python
+faker
+python-dateutil

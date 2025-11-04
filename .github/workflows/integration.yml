@@ -1,0 +1,147 @@
+name: End-to-end integration
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_PROJECT_NAME: dlytica
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log into Docker (no-op)
+        run: echo "No registry login required for local images"
+
+      - name: Build and start services
+        run: |
+          docker compose up --build -d
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            docker compose run --rm --no-deps --entrypoint bash postgres -c "pg_isready -U payments" && break || sleep 2;
+          done
+
+      - name: Produce test events
+        run: |
+          # send 200 events from producer container
+          docker compose run --rm producer python /app/generate_payments.py --bootstrap-server kafka:9092 --topic payments.raw --rate 200 --total 200 --seed 42
+
+      - name: Run Bronze -> Silver batch (hourly job)
+        run: |
+          docker compose run --rm spark python /app/src/spark_batch/bronze_to_silver.py
+
+      - name: Run Silver -> Gold loader
+        run: |
+          docker compose run --rm spark python /app/src/spark_batch/silver_to_gold.py
+
+      - name: Run dbt models and tests
+        run: |
+          docker compose run --rm airflow bash -lc "cd /opt/airflow/dbt_project && dbt deps && dbt run && dbt test"
+
+      - name: Export reports
+        run: |
+          docker compose run --rm airflow python /opt/airflow/scripts/export_reports.py
+
+      - name: Run integration tests
+        run: |
+          docker run --rm --network dlytica_default -v ${GITHUB_WORKSPACE}:/app -w /app python:3.10-slim bash -lc "pip install -r requirements.txt pytest psycopg2-binary && pytest -q tests/test_integration.py"
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose down --volumes
+name: Integration CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      docker:
+        image: docker:24.0.5-dind
+        privileged: true
+        options: >-
+          --health-cmd="docker info >/dev/null || exit 1"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build required images (cacheable)
+        run: |
+          # build only images we need for integration: producer and spark
+          docker compose build producer spark
+
+      - name: Start minimal services
+        run: |
+          # start only the services required for integration tests to save time
+          docker compose up -d postgres zookeeper kafka spark producer
+
+      - name: Wait for Postgres
+        run: |
+          for i in {1..30}; do
+            docker exec $(docker ps -q -f name=postgres) pg_isready -U payments -d payments_dw && break || sleep 2
+          done
+
+      - name: Create Kafka topics
+        run: |
+          KAFKA_CONTAINER=$(docker compose ps -q kafka)
+          bash infra/kafka/create_topics.sh $KAFKA_CONTAINER
+
+      - name: Run producer to send test events
+        run: |
+          docker compose run --rm producer python generate_payments.py --bootstrap-server kafka:9092 --rate 50 --total 300
+
+      - name: Run Bronze->Silver batch (Spark)
+        run: |
+          docker compose run --rm spark spark-submit --master local[2] src/spark_batch/bronze_to_silver.py
+
+      - name: Run Silver->Gold loader (Spark/Pandas)
+        run: |
+          docker compose run --rm spark spark-submit --master local[2] src/spark_batch/silver_to_gold.py
+
+      - name: Install dbt locally and run seeds/models/tests
+        run: |
+          python -m pip install --upgrade pip
+          pip install dbt-core dbt-postgres
+          cd dbt_project
+          cp profiles.yml.example profiles.yml || true
+          dbt seed --profiles-dir . --profiles-file profiles.yml
+          dbt run --profiles-dir . --profiles-file profiles.yml
+          dbt test --profiles-dir . --profiles-file profiles.yml
+
+      - name: Run pytest (unit + integration)
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest sqlalchemy psycopg2-binary
+          pytest -q
+
+      - name: Gather outputs
+        run: |
+          echo "Listing outputs"
+          ls -la outputs || true
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose down --volumes --remove-orphans

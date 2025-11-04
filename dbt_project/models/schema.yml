@@ -1,0 +1,67 @@
+version: 2
+
+seeds:
+  - name: payments_raw
+    description: "Seeded raw payment events used for testing"
+  - name: blacklist_merchants
+    description: "Seeded blacklist of merchants"
+
+models:
+  - name: stg_payments
+    tests:
+      - not_null:
+          column_name: transaction_id
+  - name: dim_merchant
+    tests:
+      - not_null:
+          column_name: merchant_id
+      - unique:
+          column_name: merchant_id
+  - name: dim_card
+    tests:
+      - not_null:
+          column_name: card_hash
+      - unique:
+          column_name: card_hash
+  - name: fact_transactions
+    tests:
+      - not_null:
+          column_name: transaction_id
+      - unique:
+          column_name: transaction_id
+      - relationships:
+          column_name: merchant_id
+          to: ref('dim_merchant')
+          field: merchant_id
+      - relationships:
+          column_name: card_hash
+          to: ref('dim_card')
+          field: card_hash
+      - test: assert_amount_non_negative
+  - name: fact_fraud_signals
+    description: "Transactions that triggered fraud signals"
+
+  - name: settlement_daily
+    description: "Daily settlement aggregates per merchant"
+    tests:
+      - not_null:
+          column_name: merchant_id
+      - not_null:
+          column_name: dt
+
+  - name: amount_buckets
+    description: "Buckets for transaction amounts"
+
+tests:
+  - name: assert_amount_non_negative
+    sql: "SELECT * FROM {{ model }} WHERE amount < 0"
+version: 2
+
+models:
+  - name: dim_merchant
+    description: "Dimension table for merchants"
+    columns:
+      - name: merchant_id
+        tests:
+          - not_null
+          - unique

@@ -1,0 +1,95 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.1
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2181:2181'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc -w 3 127.0.0.1 2181 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.1
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: 'zookeeper:2181'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - '9092:9092'
+    depends_on:
+      - zookeeper
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "</dev/tcp/127.0.0.1/9092 >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  producer:
+    build: ./src/producer
+    image: dlytica/producer:local
+    depends_on:
+      - kafka
+    networks:
+      - default
+
+  postgres:
+    image: postgres:14
+    environment:
+      - POSTGRES_USER=payments
+      - POSTGRES_PASSWORD=payments
+      - POSTGRES_DB=payments_dw
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U payments"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  airflow:
+    build: ./src/airflow
+    image: dlytica/airflow:dbt
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./src:/opt/airflow/src
+      - ./logs:/opt/airflow/logs
+    command: webserver
+    depends_on:
+      - postgres
+
+  spark:
+    build: ./src/spark
+    image: dlytica/spark:local
+    volumes:
+      - ./src:/app
+      - ./data:/data
+      - ivy2:/root/.ivy2
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - PYSPARK_SUBMIT_ARGS=--packages org.apache.spark:spark-sql-kafka-0-10_2.13:3.4.1 pyspark-shell
+
+networks:
+  default:
+    name: dlytica_default
+
+volumes:
+  pgdata:
+  ivy2:

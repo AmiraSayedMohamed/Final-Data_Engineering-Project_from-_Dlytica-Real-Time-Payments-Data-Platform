@@ -1,0 +1,9 @@
+name: dlytica_payments
+version: '1.0'
+config-version: 2
+
+profile: dlytica_profile
+
+model-paths: ["models"]
+target-path: "target"
+clean-targets: ["target", "dbt_modules"]

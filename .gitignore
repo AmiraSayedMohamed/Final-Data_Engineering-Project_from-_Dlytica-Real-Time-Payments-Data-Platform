@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# Logs and runtime files
+logs/
+
+# Data checkpoints and outputs (optional - usually large or generated)
+data/checkpoints/
+outputs/
+
+# Editor/OS files
+.vscode/
+Thumbs.db
+desktop.ini

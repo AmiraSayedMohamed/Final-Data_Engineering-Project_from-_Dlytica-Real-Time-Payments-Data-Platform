@@ -1,0 +1,5 @@
+pyspark
+kafka-python
+faker
+python-dateutil
+pandas
